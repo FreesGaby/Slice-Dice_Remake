@@ -27,8 +27,13 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
 
     private int wave = 1;
     private int selectedHero = 0;
-    private long lastSpawnTime = 0;
     private boolean paused = false;
+    private boolean waveActive = false;
+    private int waveRemainingToSpawn = 0;
+    private double waveSpawnTimer = 0;
+    private double waveSpawnInterval = 0.4;
+    private double intermissionTimer = 0;
+    private static final double STEP = 1.0 / 60.0;
     
     private final Set<Integer> keysDown = new HashSet<>();
 
@@ -47,7 +52,7 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
 
     void start() {
         timer.start();
-        spawnWave(wave);
+        startWave(wave);
     }
 
     @Override
@@ -71,10 +76,29 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
         updateProjectiles();
         resolveCombat();
         cleanupDead();
+        updateWaveSystem();
+    }
 
-        if (monsters.isEmpty() && System.currentTimeMillis() - lastSpawnTime > 800) {
-            wave++;
-            spawnWave(wave);
+    private void updateWaveSystem() {
+        if (waveActive) {
+            if (waveRemainingToSpawn > 0) {
+                waveSpawnTimer -= STEP;
+                if (waveSpawnTimer <= 0) {
+                    spawnWaveMonster();
+                    waveRemainingToSpawn--;
+                    waveSpawnTimer = waveSpawnInterval;
+                }
+            } else if (monsters.isEmpty()) {
+                waveActive = false;
+                intermissionTimer = 1.2;
+            }
+        } else {
+            if (intermissionTimer > 0) {
+                intermissionTimer -= STEP;
+            } else if (monsters.isEmpty()) {
+                wave++;
+                startWave(wave);
+            }
         }
     }
 
@@ -191,16 +215,27 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             if (selectedHero >= heroes.size()) selectedHero = Math.max(0, heroes.size() - 1);
         }
 
-        private void spawnWave(int wave) {
-            lastSpawnTime = System.currentTimeMillis();
-            int count = 3 + wave;
-            for (int i = 0; i < count; i++) {
-                double y = 100 + rng.nextInt(HEIGHT - 180);
-                double x = WIDTH + 60 + rng.nextInt(300);
-                int hp = 40 + wave * 8;
-                int dmg = 4 + wave / 2;
-                monsters.add(new Monster(x, y, hp, dmg, 42 + wave * 2));
+        private void startWave(int wave) {
+            waveActive = true;
+            int baseCount = 4 + wave * 2;
+            if (wave % 5 == 0) baseCount += 4;
+            waveRemainingToSpawn = baseCount;
+            waveSpawnInterval = Math.max(0.15, 0.55 - wave * 0.02);
+            waveSpawnTimer = 0;
+        }
+
+        private void spawnWaveMonster() {
+            double y = 100 + rng.nextInt(HEIGHT - 180);
+            double x = WIDTH + 60 + rng.nextInt(300);
+            int hp = 40 + wave * 10;
+            int dmg = 4 + wave / 2;
+            double range = 42 + wave * 2;
+            if (wave % 5 == 0 && waveRemainingToSpawn == 1) {
+                hp += 120;
+                dmg += 6;
+                range += 12;
             }
+            monsters.add(new Monster(x, y, hp, dmg, range));
         }
 
         private Monster findNearestMonster(Entity e) {
@@ -357,6 +392,14 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
                 double cd = h.getAbilityCooldownRemaining();
                 String cdText = cd <= 0 ? "READY" : String.format( "%.1fs", cd);
                 g2.drawString("Skill: " + h.ability + " (" + cdText + ")", 40, HEIGHT - 16);
+            }
+
+            if (!waveActive && intermissionTimer > 0 && !heroes.isEmpty()) {
+                g2.setColor(new Color(220, 220, 230));
+                g2.drawString("Next wave in " + String.format("%.1fs", intermissionTimer), 40, 48);
+            } else if (waveActive && waveRemainingToSpawn > 0) {
+                g2.setColor(new Color(220, 220, 230));
+                g2.drawString("Enemies incoming: " + waveRemainingToSpawn, 40, 48);
             }
 
             if (paused) {
