@@ -17,6 +17,13 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
     private final java.util.List<Hero> heroes = new ArrayList<>();
     private final java.util.List<Monster> monsters = new ArrayList<>();
     private final java.util.List<Projectile> projectiles = new ArrayList<>();
+    private final java.util.List<Particle> particles = new ArrayList<>();
+    private final java.util.List<Ring> rings = new ArrayList<>();
+    private double flashTimer = 0;
+    private double shakeTimer = 0;
+    private double shakeMagnitude = 0;
+    private double shakeX = 0;
+    private double shakeY = 0;
 
     private int wave = 1;
     private int selectedHero = 0;
@@ -60,6 +67,7 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             m.update();
         }
 
+        updateParticles();
         updateProjectiles();
         resolveCombat();
         cleanupDead();
@@ -107,12 +115,43 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
                     double d = distance(p.x, p.y, m.x, m.y);
                     if (d <= p.radius + 14) {
                         m.hp -= p.damage;
+                        spawnExplosion(p.x, p.y, new Color(255, 160, 80));
                         remove = true;
                         break;
                     }
                 }
             }
             if (remove) projectiles.remove(i);
+        }
+    }
+
+    private void updateParticles() {
+        for (int i = particles.size() - 1; i >= 0; i--) {
+            Particle p = particles.get(i);
+            p.update();
+            if (p.life <= 0) {
+                particles.remove(i);
+            }
+        }
+        for (int i = rings.size() - 1; i >= 0; i--) {
+            Ring r = rings.get(i);
+            r.update();
+            if (r.life <= 0) {
+                rings.remove(i);
+            }
+        }
+        if (flashTimer > 0) {
+            flashTimer = Math.max(0, flashTimer - 1.0 / 60.0);
+        }
+        if (shakeTimer > 0) {
+            shakeTimer = Math.max(0, shakeTimer - 1.0 / 60.0);
+            double t = Math.max(0.0, shakeTimer / 0.18);
+            double mag = shakeMagnitude * t;
+            shakeX = (rng.nextDouble() - 0.5) * mag;
+            shakeY = (rng.nextDouble() - 0.5) * mag;
+        } else {
+            shakeX = 0;
+            shakeY = 0;
         }
     }
 
@@ -196,9 +235,12 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             Graphics2D g2 = (Graphics2D) g;
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 
+            g2.translate(shakeX, shakeY);
             drawArena(g2);
             drawEntities(g2);
             drawUI(g2);
+            g2.translate(-shakeX, -shakeY);
+            drawFlash(g2);
         }
 
         private void drawArena(Graphics2D g2) {
@@ -210,12 +252,9 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
 
         private void drawEntities(Graphics2D g2) {
             for (Hero h : heroes) {
-                g2.setColor(h.color);
-                g2.fillRoundRect((int) (h.x - 18), (int) (h.y - 18), 36, 36, 8, 8);
-
+                drawHero(g2, h);
                 g2.setColor(Color.WHITE);
                 g2.drawString(h.name, (int) (h.x - 22), (int) (h.y - 26));
-
                 drawHealthBar(g2, h.x - 22, h.y + 22, 44, 6, h.hp, h.maxHp, new Color(80, 220, 140));
             }
 
@@ -232,6 +271,77 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             for (Projectile p : projectiles) {
                 g2.setColor(new Color(255, 190, 120));
                 g2.fillOval((int) (p.x - p.radius), (int) (p.y - p.radius), (int) (p.radius * 2), (int) (p.radius * 2));
+            }
+
+            for (Particle p : particles) {
+                g2.setColor(p.color);
+                int size = (int) Math.max(2, p.size);
+                g2.fillOval((int) (p.x - size / 2.0), (int) (p.y - size / 2.0), size, size);
+            }
+
+            Stroke oldStroke = g2.getStroke();
+            for (Ring r : rings) {
+                g2.setStroke(new BasicStroke((float) r.thickness, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g2.setColor(r.color);
+                int size = (int) Math.max(2, r.radius * 2);
+                g2.drawOval((int) (r.x - r.radius), (int) (r.y - r.radius), size, size);
+            }
+            g2.setStroke(oldStroke);
+        }
+
+        private void drawHero(Graphics2D g2, Hero h) {
+            int cx = (int) h.x;
+            int cy = (int) h.y;
+            double t = System.currentTimeMillis() / 1000.0;
+            double seed = h.name.hashCode() * 0.13;
+            int bob = (int) Math.round(Math.sin(t * 32 + seed) * 2.5);
+            boolean blink = Math.sin(t * 6.5 + seed) > 0.98;
+            cy += bob;
+
+            g2.setColor(h.color.darker());
+            g2.fillRoundRect(cx - 12, cy - 10, 24, 26, 6, 6);
+            g2.setColor(new Color(240, 240, 245));
+            g2.fillOval(cx - 8, cy - 18, 16, 16);
+            drawFace(g2, cx, cy - 10, blink);
+
+            if ("Tank".equals(h.name)) {
+                g2.setColor(h.color);
+                g2.fillRoundRect(cx - 14, cy - 12, 28, 28, 8, 8);
+                g2.setColor(new Color(220, 230, 255));
+                g2.fillOval(cx - 5, cy - 10, 10, 10);
+                drawFace(g2, cx, cy - 10, blink);
+                g2.setColor(new Color(90, 120, 180));
+                g2.fillRoundRect(cx + 12, cy - 8, 10, 16, 4, 4);
+            } else if ("Rogue".equals(h.name)) {
+                g2.setColor(h.color);
+                g2.fillRoundRect(cx - 10, cy - 12, 20, 22, 6, 6);
+                g2.setColor(new Color(60, 60, 60));
+                g2.fillOval(cx - 9, cy - 16, 18, 12);
+                drawFace(g2, cx, cy - 10, blink);
+                g2.setColor(new Color(200, 200, 200));
+                g2.fillRect(cx - 18, cy, 8, 2);
+                g2.fillRect(cx + 10, cy, 8, 2);
+            } else {
+                g2.setColor(h.color);
+                g2.fillRoundRect(cx - 10, cy - 12, 20, 24, 6, 6);
+                drawFace(g2, cx, cy - 10, blink);
+                g2.setColor(new Color(140, 80, 30));
+                g2.fillRect(cx + 12, cy - 18, 3, 30);
+                g2.setColor(new Color(255, 220, 140));
+                g2.fillOval(cx + 10, cy - 22, 8, 8);
+                g2.setColor(new Color(120, 60, 200));
+                g2.fillOval(cx - 8, cy - 16, 16, 10);
+            }
+        }
+
+        private void drawFace(Graphics2D g2, int cx, int cy, boolean blink) {
+            g2.setColor(new Color(30, 30, 30));
+            if (blink) {
+                g2.drawLine(cx - 5, cy - 1, cx - 2, cy - 1);
+                g2.drawLine(cx + 2, cy - 1, cx + 5, cy - 1);
+            } else {
+                g2.fillOval(cx - 5, cy - 4, 3, 3);
+                g2.fillOval(cx + 2, cy - 4, 3, 3);
             }
         }
 
@@ -266,6 +376,13 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
                 g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 14f));
                 g2.drawString("Relance pour rejouer", WIDTH / 2 - 70, HEIGHT / 2 + 26);
             }
+        }
+
+        private void drawFlash(Graphics2D g2) {
+            if (flashTimer <= 0) return;
+            float alpha = (float) Math.min(0.35, flashTimer * 0.6);
+            g2.setColor(new Color(255, 245, 210, (int) (alpha * 255)));
+            g2.fillRect(0, 0, WIDTH, HEIGHT);
         }
 
         private void drawHealthBar(Graphics2D g2, double x, double y, int w, int h, int hp, int maxHp, Color color) {
@@ -320,10 +437,13 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
                     dx = 1;
                     dy = 0;
                 }
+                double startX = h.x;
+                double startY = h.y;
                 h.x += dx * 120;
                 h.y += dy * 120;
                 h.x = clamp(h.x, 40, WIDTH - 40);
                 h.y = clamp(h.y, 60, HEIGHT - 40);
+                spawnDashTrail(startX, startY, h.x, h.y, h.color);
                 h.useAbility();
             } else if (h.ability == AbilityType.FIREBALL) {
                 Monster target = findNearestMonster(h);
@@ -345,6 +465,34 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
                     }
                 }
                 h.useAbility();
+            }
+        }
+
+        private void spawnDashTrail(double x1, double y1, double x2, double y2, Color base) {
+            int steps = 12;
+            for (int i = 0; i <= steps; i++) {
+                double t = i / (double) steps;
+                double x = x1 + (x2 - x1) * t;
+                double y = y1 + (y2 - y1) * t;
+                double jitterX = (rng.nextDouble() - 0.5) * 6;
+                double jitterY = (rng.nextDouble() - 0.5) * 6;
+                particles.add(new Particle(x + jitterX, y + jitterY, 0, 0, 12, 0.35, new Color(base.getRed(), base.getGreen(), base.getBlue(), 180)));
+            }
+        } 
+
+        private void spawnExplosion(double x, double y, Color color) {
+            flashTimer = Math.max(flashTimer, 0.18);
+            shakeTimer = Math.max(shakeTimer, 0.18);
+            shakeMagnitude = Math.max(shakeMagnitude, 10);
+            rings.add(new Ring(x, y, 10, 44, 0.35, 3.5, new Color(255, 230, 180, 200)));
+            rings.add(new Ring(x, y, 6, 30, 0.28, 2.2, new Color(color.getRed(), color.getGreen(), color.getBlue(), 190)));
+            for (int i = 0; i < 18; i++) {
+                double angle = rng.nextDouble() * Math.PI * 2;
+                double speed = 1.2 + rng.nextDouble() * 2.0;
+                double vx = Math.cos(angle) * speed;
+                double vy = Math.sin(angle) * speed;
+                double size = 6 + rng.nextDouble() * 6;
+                particles.add(new Particle(x, y, vx, vy, size, 0.5 + rng.nextDouble() * 0.3, new Color(color.getRed(), color.getGreen(), color.getBlue(), 200)));
             }
         }
     }
