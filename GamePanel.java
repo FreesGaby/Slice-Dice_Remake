@@ -3,7 +3,6 @@ import java.awt.*;
 import java.awt.event.*;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
@@ -17,6 +16,7 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
 
     private final java.util.List<Hero> heroes = new ArrayList<>();
     private final java.util.List<Monster> monsters = new ArrayList<>();
+    private final java.util.List<Projectile> projectiles = new ArrayList<>();
 
     private int wave = 1;
     private int selectedHero = 0;
@@ -31,9 +31,9 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
         setFocusable(true);
         addKeyListener(this);
 
-        heroes.add(new Hero("Tank", 160, 260, new Color(64, 150, 255), 240, 6, 1.2));
-        heroes.add(new Hero("Rogue", 210, 320, new Color(255, 120, 90), 140, 12, 2.2));
-        heroes.add(new Hero("Mage", 220, 200, new Color(170, 110, 255), 110, 18, 1.4));
+        heroes.add(new Hero("Tank", AbilityType.STUN, 3.5, 160, 260, new Color(64, 150, 255), 240, 6, 1.2));
+        heroes.add(new Hero("Rogue", AbilityType.DASH, 2.0, 210, 320, new Color(255, 120, 90), 140, 12, 2.2));
+        heroes.add(new Hero("Mage", AbilityType.FIREBALL, 2.8, 220, 200, new Color(170, 110, 255), 110, 18, 1.4));
 
         timer = new Timer(1000 / FPS, this);
     }
@@ -60,6 +60,7 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             m.update();
         }
 
+        updateProjectiles();
         resolveCombat();
         cleanupDead();
 
@@ -86,10 +87,32 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             double len = Math.sqrt(dx * dx + dy * dy);
             dx /= len;
             dy /= len;
+            h.setLastMove(dx, dy);
             h.x += dx * speed;
             h.y += dy * speed;
             h.x = clamp(h.x, 40, WIDTH - 40);
             h.y = clamp(h.y, 60, HEIGHT - 40);
+        }
+    }
+
+    private void updateProjectiles() {
+        for (int i = projectiles.size() - 1; i >= 0; i--) {
+            Projectile p = projectiles.get(i);
+            p.update();
+            boolean remove = false;
+            if (p.x < 0 || p.x > WIDTH || p.y < 0 || p.y > HEIGHT) {
+                remove = true;
+            } else {
+                for (Monster m : monsters) {
+                    double d = distance(p.x, p.y, m.x, m.y);
+                    if (d <= p.radius + 14) {
+                        m.hp -= p.damage;
+                        remove = true;
+                        break;
+                    }
+                }
+            }
+            if (remove) projectiles.remove(i);
         }
     }
 
@@ -107,6 +130,7 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             }
 
             for (Monster m : monsters) {
+                if (m.isStunned()) continue;
                 Hero target2 = findNearestHero(m);
                 if (target2 == null) continue;
                 double dist2 = distance(m.x, m.y, target2.x, target2.y);
@@ -196,9 +220,18 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             }
 
             for (Monster m : monsters) {
-                g2.setColor(new Color(220, 80, 80));
+                if (m.isStunned()) {
+                    g2.setColor(new Color(120, 180, 255));
+                } else {
+                    g2.setColor(new Color(220, 80, 80));
+                }
                 g2.fillOval((int) (m.x - 16), (int) (m.y - 16), 32, 32);
                 drawHealthBar(g2, m.x - 20, m.y + 20, 40, 5, m.hp, m.maxHp, new Color(255, 160, 120));
+            }
+
+            for (Projectile p : projectiles) {
+                g2.setColor(new Color(255, 190, 120));
+                g2.fillOval((int) (p.x - p.radius), (int) (p.y - p.radius), (int) (p.radius * 2), (int) (p.radius * 2));
             }
         }
 
@@ -207,7 +240,14 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             g2.setFont(g2.getFont().deriveFont(Font.BOLD, 16f));
             g2.drawString("Wave: " + wave, 40, 30);
             g2.setFont(g2.getFont().deriveFont(Font.PLAIN, 12f));
-            g2.drawString("WASD: move | 1-3: select hero | P: pause", 160, 30);
+            g2.drawString("WASD: move | 1-3: select hero | SPACE: skill | P: pause", 160, 30);
+
+            if (!heroes.isEmpty()) {
+                Hero h = heroes.get(Math.max(0, Math.min(selectedHero, heroes.size() - 1)));
+                double cd = h.getAbilityCooldownRemaining();
+                String cdText = cd <= 0 ? "READY" : String.format( "%.1fs", cd);
+                g2.drawString("Skill: " + h.ability + " (" + cdText + ")", 40, HEIGHT - 16);
+            }
 
             if (paused) {
                 g2.setColor(new Color(0, 0, 0, 160));
@@ -255,6 +295,7 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
             if (e.getKeyCode() == KeyEvent.VK_1) selectedHero = 0;
             if (e.getKeyCode() == KeyEvent.VK_2) selectedHero = 1;
             if (e.getKeyCode() == KeyEvent.VK_3) selectedHero = 2;
+            if (e.getKeyCode() == KeyEvent.VK_SPACE) triggerAbility();
         }
 
         @Override
@@ -265,5 +306,45 @@ public class GamePanel extends JPanel implements ActionListener, KeyListener {
         @Override
         public void keyTyped(KeyEvent e) {
             // unused
+        }
+
+        private void triggerAbility() {
+            if (heroes.isEmpty()) return;
+            Hero h = heroes.get(Math.max(0, Math.min(selectedHero, heroes.size() - 1)));
+            if (!h.canUseAbility()) return;
+
+            if (h.ability == AbilityType.DASH) {
+                double dx = h.lastDirX;
+                double dy = h.lastDirY;
+                if (dx == 0 && dy == 0) {
+                    dx = 1;
+                    dy = 0;
+                }
+                h.x += dx * 120;
+                h.y += dy * 120;
+                h.x = clamp(h.x, 40, WIDTH - 40);
+                h.y = clamp(h.y, 60, HEIGHT - 40);
+                h.useAbility();
+            } else if (h.ability == AbilityType.FIREBALL) {
+                Monster target = findNearestMonster(h);
+                if (target == null) return;
+                double dx = target.x - h.x;
+                double dy = target.y - h.y;
+                double len = Math.sqrt(dx * dx + dy * dy);
+                if (len == 0) return;
+                dx /= len;
+                dy /= len;
+                projectiles.add(new Projectile(h.x, h.y, dx * 6.5, dy * 6.5, 12, 28));
+                h.useAbility();
+            } else if (h.ability == AbilityType.STUN) {
+                double radius = 90;
+                for (Monster m : monsters) {
+                    double d = distance (h.x, h.y, m.x, m.y);
+                    if (d <= radius) {
+                        m.stun(1.5);
+                    }
+                }
+                h.useAbility();
+            }
         }
     }
